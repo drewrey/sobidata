@@ -48,14 +48,16 @@ class Sobi(object):
             }
         }
         self.datetime_format = '%Y-%m-%dT%H:%M:%SZ'
-        self.routes_url = 'https://app.socialbicycles.com/api/routes.json?page=%s'
-        self.route_url = 'https://app.socialbicycles.com/api/routes/%s.json'
-        self.hubs_url = 'https://app.socialbicycles.com/api/hubs.json'
-        self.hub_url = 'https://app.socialbicycles.com/api/hubs/%s.json'
-        self.bikes_url = 'https://app.socialbicycles.com/api/bikes.json'
-        self.bike_url = 'https://app.socialbicycles.com/api/bikes/%s.json'
-        self.friends_url = 'https://app.socialbicycles.com/api/friends.json'
-        self.me_url = 'https://app.socialbicycles.com/api/users/me.json'
+        self.base_url = 'https://app.socialbicycles.com/api/'
+        self.routes_url = '%s%s' % (self.base_url, 'routes.json?page=%s')
+        self.route_url = '%s%s' % (self.base_url, 'routes/%s.json')
+        self.hubs_url = '%s%s' % (self.base_url, 'hubs.json')
+        self.hub_url = '%s%s' % (self.base_url, 'hubs/%s.json')
+        self.bikes_url = '%s%s' % (self.base_url, 'bikes.json')
+        self.bike_url = '%s%s' % (self.base_url, 'bikes/%s.json')
+        self.network_url = '%s%s' % (self.base_url, 'networks/%s/%s')
+        self.friends_url = '%s%s' % (self.base_url, 'friends.json')
+        self.me_url = '%s%s' % (self.base_url, 'users/me.json')
         self.polite = False
 
     def make_auth(self):
@@ -97,7 +99,7 @@ class Sobi(object):
             distance_km = self.convert_miles_to_km(self.to_float(item['distance']))
             duration = self.duration_from_times(item['start_time'], item['finish_time'])
             duration_hh_mm_ss = self.duration_hh_mm_ss(duration)
-            bike_name = self.lookup_bike_name(item['bike_id'])
+            bike_name = self.lookup_bike_name(item['network_id'], item['bike_id'])
             
             template = {
                 'route_id': item['id'],
@@ -119,20 +121,31 @@ class Sobi(object):
         page = routes_obj['current_page'] + 1
         self.get_data(page=page)
 
-    def lookup_bike_name(self, bike_id):
+    def lookup_bike_name(self, network_id, bike_id):
         if not bike_id:
             return ''
-        bike_name = '' # initialize
         # check whether bike_id has already been looked up
         bike_match = [bike['bike_name'] for bike in self.data['bikes'] if bike['bike_id'] == bike_id]
         if not bike_match:
-            this_bike_url = self.bike_url % (bike_id)
-            response = self.get_request(this_bike_url)
+            this_network_url = self.network_url % (network_id, '/bikes.json')
+            # TODO: adjust the per_page / paginate this, too like routes. maybe with an inner closure in a new function
+            response = self.get_request(this_network_url)
+            self.total_bike_req += 1
             if response.status_code == 200:
-                bike_obj = response.json()
-                bike_name = bike_obj['name']
+                network_bikes = response.json()
+                bikes = network_bikes['items']
                 # add bike to self.data['bikes']
-                self.data['bikes'].append({ 'bike_id': bike_id, 'bike_name': bike_name })
+                for bike in bikes:
+                    self.data['bikes'].append({ 'bike_id': bike['id'], 'bike_name': bike['name'] })
+            if bike_id not in [a['bike_id'] for a in self.data['bikes']]:
+                # TODO: is it safe to assume this is true? it comes from routes.items
+                print('warning: %s not found in its network %s?', bike_id, network_id)
+                this_bike_url = self.bike_url % (bike_id)
+                response = self.get_request(this_bike_url)
+                if response.status_code == 200:
+                    bike_obj = response.json()
+                    self.data['bikes'].append({ 'bike_id': bike_id, 'bike_name': bike_obj['name'] })
+            bike_name = [a['bike_name'] for a in self.data['bikes'] if a['bike_id'] == bike_id][0]
         else: # bike_id has a match
             bike_name = bike_match[0]
         return bike_name
